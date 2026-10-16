@@ -1,16 +1,24 @@
 // Include libraries
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 
 // Replace with your network credentials
 const char* ssid = "CBCI-34B4";
 const char* password = "class0452anchor";
-const char* slack_webhook = "https://hooks.slack.com/services/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"
+const char* slack_webhook = "https://hooks.slack.com/services/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";
 
 // Constants
 unsigned long previousMillis = 0;
 unsigned long interval = 30000;
-unsigned long loopHighMillis = 0;
+
+const unsigned long LEAK_CONFIRM_TIME = 30000;   // 30 s of continuous HIGH
+const unsigned long ALERT_REPEAT_TIME = 600000;  // 10 min between alerts
+unsigned long highSince = 0;
+unsigned long lastAlert = 0;
+bool sensorHigh = false;
+bool alertSent = false;
 
 // Set pin numbrs
 const int waterSensor = 4;
@@ -36,7 +44,7 @@ void setup()
 {
   Serial.begin(115200);
 
-  pinMode(waterSensor, INPUT)
+  pinMode(waterSensor, INPUT);
 
   initWiFi();
   Serial.print("RSSI: ");
@@ -58,17 +66,33 @@ void loop()
   }
 
   //Leak sensor
-  waterState = digitalRead(waterSensor);
-  Serial.println(waterState);
+  unsigned long now = millis();
 
-  unsigned long loopStartMillis = millis(); 
-  while (waterState == HIGH && loopHighMillis - loopStartMillis < interval)
-    {
-      loopHighMillis = millis();
-    }
-  if (waterState == HIGH && loopHighMillis - loopStartMillis = interval)
+  if (digitalRead(waterSensor) == HIGH)
   {
-    println("Water leak detected");
-    //sendSlack("<!channel> Water leak detected");
+    if (!sensorHigh)              // just went HIGH: start the 30 s timer
+    {
+      sensorHigh = true;
+      highSince = now;
+    }
+
+    if (now - highSince >= LEAK_CONFIRM_TIME && (!alertSent || now - lastAlert >= ALERT_REPEAT_TIME))
+    {
+      Serial.println("Water leak detected");
+      WiFiClientSecure client;
+      client.setInsecure();
+      HTTPClient https;
+      https.begin(client, slack_webhook);
+      https.addHeader("Content-Type", "application/json");
+      https.POST("{\"text\":\"<!channel> Water leak detected\"}");
+      https.end();
+      alertSent = true;
+      lastAlert = now;
+    }
+  }
+  else                            // any LOW reading resets everything
+  {
+    sensorHigh = false;
+    alertSent = false;
   }
 }
